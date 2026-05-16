@@ -376,14 +376,16 @@ func (h *Handshaker) ReplayBlocks(
 	case storeBlockHeight < stateBlockHeight:
 		// the state should never be ahead of the store (this is under tendermint's control)
 		panic(fmt.Sprintf("StateBlockHeight (%d) > StoreBlockHeight (%d)", stateBlockHeight, storeBlockHeight))
-
-	case storeBlockHeight > stateBlockHeight+1 && stateBlockHeight > 0:
-		// store should be at most one ahead of the state (this is under tendermint's control).
-		// ambros patch: only assert when state is non-genesis. A pre-populated blockstore
-		// (e.g. an archival replay from genesis) writes blocks ahead of state intentionally,
-		// then expects Handshake to drive ABCI replay forward.
-		panic(fmt.Sprintf("StoreBlockHeight (%d) > StateBlockHeight + 1 (%d)", storeBlockHeight, stateBlockHeight+1))
 	}
+
+	// ambros patch: removed the previous "storeBlockHeight > stateBlockHeight+1"
+	// panic entirely. Vanilla tendermint asserted store could not be more than
+	// one block ahead of state, but a pre-populated blockstore.db (archival
+	// replay) intentionally writes future blocks ahead of state, both from
+	// genesis AND when resuming a partial replay. The dispatch arm below
+	// (`else if storeBlockHeight > stateBlockHeight+1`) handles both cases:
+	// firstBlock derives from appBlockHeight+1 (resume) or state.InitialHeight
+	// (fresh genesis with no app state yet).
 
 	var err error
 	// Now either store is equal to state, or one ahead.
