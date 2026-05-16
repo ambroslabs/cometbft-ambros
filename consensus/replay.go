@@ -377,8 +377,11 @@ func (h *Handshaker) ReplayBlocks(
 		// the state should never be ahead of the store (this is under tendermint's control)
 		panic(fmt.Sprintf("StateBlockHeight (%d) > StoreBlockHeight (%d)", stateBlockHeight, storeBlockHeight))
 
-	case storeBlockHeight > stateBlockHeight+1:
-		// store should be at most one ahead of the state (this is under tendermint's control)
+	case storeBlockHeight > stateBlockHeight+1 && stateBlockHeight > 0:
+		// store should be at most one ahead of the state (this is under tendermint's control).
+		// ambros patch: only assert when state is non-genesis. A pre-populated blockstore
+		// (e.g. an archival replay from genesis) writes blocks ahead of state intentionally,
+		// then expects Handshake to drive ABCI replay forward.
 		panic(fmt.Sprintf("StoreBlockHeight (%d) > StateBlockHeight + 1 (%d)", storeBlockHeight, stateBlockHeight+1))
 	}
 
@@ -428,6 +431,15 @@ func (h *Handshaker) ReplayBlocks(
 			return state.AppHash, err
 		}
 
+	} else if storeBlockHeight > stateBlockHeight+1 {
+		// ambros patch: pre-populated blockstore with a fresh state (e.g. archival
+		// replay from genesis). Replay every block from appBlockHeight+1 (or
+		// state.InitialHeight if app is fresh) up to storeBlockHeight via ABCI.
+		h.logger.Info("Replay: pre-populated blockstore detected",
+			"appHeight", appBlockHeight,
+			"stateHeight", stateBlockHeight,
+			"storeHeight", storeBlockHeight)
+		return h.replayBlocks(state, proxyApp, appBlockHeight, storeBlockHeight, false)
 	}
 
 	panic(fmt.Sprintf("uncovered case! appHeight: %d, storeHeight: %d, stateHeight: %d",
