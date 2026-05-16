@@ -433,13 +433,29 @@ func (h *Handshaker) ReplayBlocks(
 
 	} else if storeBlockHeight > stateBlockHeight+1 {
 		// ambros patch: pre-populated blockstore with a fresh state (e.g. archival
-		// replay from genesis). Replay every block from appBlockHeight+1 (or
-		// state.InitialHeight if app is fresh) up to storeBlockHeight via ABCI.
+		// replay from genesis). Replay every block via the full ApplyBlock path
+		// (h.replayBlock) so each block's validator-set / consensus-params /
+		// ABCI-response updates land in state.db. The shorter h.replayBlocks
+		// path uses sm.ExecCommitBlock which intentionally skips state mutation
+		// -- fine for a short crash-recovery window, but not for from-genesis
+		// replay across many validator-set changes.
+		firstBlock := appBlockHeight + 1
+		if firstBlock == 1 {
+			firstBlock = state.InitialHeight
+		}
 		h.logger.Info("Replay: pre-populated blockstore detected",
 			"appHeight", appBlockHeight,
 			"stateHeight", stateBlockHeight,
-			"storeHeight", storeBlockHeight)
-		return h.replayBlocks(state, proxyApp, appBlockHeight, storeBlockHeight, false)
+			"storeHeight", storeBlockHeight,
+			"firstBlock", firstBlock)
+		var err error
+		for i := firstBlock; i <= storeBlockHeight; i++ {
+			state, err = h.replayBlock(state, i, proxyApp.Consensus())
+			if err != nil {
+				return nil, err
+			}
+		}
+		return state.AppHash, nil
 	}
 
 	panic(fmt.Sprintf("uncovered case! appHeight: %d, storeHeight: %d, stateHeight: %d",
