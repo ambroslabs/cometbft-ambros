@@ -652,6 +652,44 @@ func (vals *ValidatorSet) UpdateWithChangeSet(changes []*Validator) error {
 	return vals.updateWithChangeSet(changes, true)
 }
 
+// SkipSigVerifyCommit performs the same structural / voting-power checks as
+// VerifyCommit but SKIPS the Ed25519 signature verification on every signature.
+// Intended only for archival replay against a pre-loaded blockstore.db sourced
+// from a trusted archive (e.g. malcom block-archive with CRC32 per block).
+// All other invariants (signature count, height, BlockID, +2/3 voting power)
+// still hold; only the per-validator signature math is short-circuited.
+//
+// ambros patch: env-gated via state.validation.go (AMBROS_SKIP_COMMIT_VERIFY).
+func SkipSigVerifyCommit(vals *ValidatorSet, blockID BlockID, height int64, commit *Commit) error {
+	if vals.Size() != len(commit.Signatures) {
+		return NewErrInvalidCommitSignatures(vals.Size(), len(commit.Signatures))
+	}
+	if height != commit.Height {
+		return NewErrInvalidCommitHeight(height, commit.Height)
+	}
+	if !blockID.Equals(commit.BlockID) {
+		return fmt.Errorf("invalid commit -- wrong block ID: want %v, got %v", blockID, commit.BlockID)
+	}
+
+	talliedVotingPower := int64(0)
+	votingPowerNeeded := vals.TotalVotingPower() * 2 / 3
+	for idx, commitSig := range commit.Signatures {
+		if commitSig.Absent() {
+			continue
+		}
+		val := vals.Validators[idx]
+		// Signature verification SKIPPED -- archive is trusted.
+		if commitSig.ForBlock() {
+			talliedVotingPower += val.VotingPower
+		}
+	}
+
+	if got, needed := talliedVotingPower, votingPowerNeeded; got <= needed {
+		return ErrNotEnoughVotingPowerSigned{Got: got, Needed: needed}
+	}
+	return nil
+}
+
 // VerifyCommit verifies +2/3 of the set had signed the given commit.
 //
 // It checks all the signatures! While it's safe to exit as soon as we have

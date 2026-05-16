@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"os"
 
 	"github.com/tendermint/tendermint/crypto"
 	"github.com/tendermint/tendermint/types"
@@ -89,10 +90,25 @@ func validateBlock(state State, block *types.Block) error {
 			return errors.New("initial block can't have LastCommit signatures")
 		}
 	} else {
-		// LastCommit.Signatures length is checked in VerifyCommit.
-		if err := state.LastValidators.VerifyCommit(
-			state.ChainID, state.LastBlockID, block.Height-1, block.LastCommit); err != nil {
-			return err
+		// ambros patch: when AMBROS_SKIP_COMMIT_VERIFY is set (archival
+		// replay against a pre-loaded blockstore.db sourced from a
+		// trusted archive, e.g. malcom block-archive with CRC32 per
+		// block), skip Ed25519 signature verification on every commit
+		// signature. The structural checks (length / height / blockID
+		// match) still run so we don't silently process malformed data;
+		// only the per-validator signature math is short-circuited.
+		// Saves ~20% of total CPU during pre-Delta cosmoshub-4 replay.
+		if os.Getenv("AMBROS_SKIP_COMMIT_VERIFY") != "" {
+			if err := types.SkipSigVerifyCommit(
+				state.LastValidators, state.LastBlockID, block.Height-1, block.LastCommit); err != nil {
+				return err
+			}
+		} else {
+			// LastCommit.Signatures length is checked in VerifyCommit.
+			if err := state.LastValidators.VerifyCommit(
+				state.ChainID, state.LastBlockID, block.Height-1, block.LastCommit); err != nil {
+				return err
+			}
 		}
 	}
 
